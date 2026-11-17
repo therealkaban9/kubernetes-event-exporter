@@ -1,0 +1,14 @@
+Kubernetes Events Exporter
+https://github.com/therealkaban9/kubernetes-event-exporter
+
+Architecture and compatibility research used these Apache-2.0 projects:
+- Opsgenie Kubernetes Event Exporter
+  https://github.com/opsgenie/kubernetes-event-exporter
+  Local source revision: 599b752
+- Kubernetes Event Exporter (mustafaakin / resmoio)
+  https://github.com/mustafaakin/kubernetes-event-exporter
+  Local source revision: 907ce91
+
+The Apache-2.0 LICENSE was preserved from the second project. Application code
+is a new implementation: legacy sink libraries, routing engine and runtime
+were not copied. The original authors retain their respective rights.
