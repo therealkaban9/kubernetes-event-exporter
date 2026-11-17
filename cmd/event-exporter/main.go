@@ -25,7 +25,7 @@ func run() error {
 		return err
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: c.LogLevel})).With("service", "kubernetes-event-exporter")
-	kube, err := exporter.KubernetesConfig(os.Getenv("KUBECONFIG"))
+	kube, err := exporter.KubernetesConfig("")
 	if err != nil {
 		return err
 	}

@@ -191,6 +191,7 @@ func TestDrainTimeoutAndUnready(t *testing.T) {
 	c := testConfig(t)
 	c.ShutdownTimeout = 10 * time.Millisecond
 	c.MaxRetries = 0
+	c.Workers = 1
 	client := fake.NewSimpleClientset(exampleEvent())
 	started := make(chan struct{})
 	finished := make(chan struct{})
@@ -207,6 +208,11 @@ func TestDrainTimeoutAndUnready(t *testing.T) {
 	go func() { done <- a.Run(ctx, l) }()
 	<-started
 	eventually(t, a.State.Ready)
+	for _, rv := range []string{"2", "3"} {
+		e := exampleEvent()
+		e.ResourceVersion = rv
+		a.enqueue(e)
+	}
 	cancel()
 	if err := <-done; err == nil || !strings.Contains(err.Error(), "drain") {
 		t.Fatal(err)
@@ -214,6 +220,50 @@ func TestDrainTimeoutAndUnready(t *testing.T) {
 	<-finished
 	if a.State.Ready() {
 		t.Fatal("ready during shutdown")
+	}
+	if testutil.ToFloat64(a.Metrics.ShutdownDrops) != 2 || testutil.ToFloat64(a.Metrics.QueueDepth) != 0 {
+		t.Fatal("pending events were not discarded without new sink requests")
+	}
+}
+
+func TestHTTPShutdownTimeout(t *testing.T) {
+	c := testConfig(t)
+	c.ShutdownTimeout = 10 * time.Millisecond
+	a := NewApplication(c, fake.NewSimpleClientset(), sinkFunc(func(context.Context, Record) error { return nil }), quietLog())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	l := listen(t)
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx, l) }()
+	eventually(t, a.State.Ready)
+	conn, err := net.Dial("tcp", l.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err = conn.Write([]byte("GET /metrics HTTP/1.1\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	// An incomplete request keeps an accepted HTTP connection in StateNew.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	if err = <-done; err == nil || !strings.Contains(err.Error(), "shutdown HTTP") {
+		t.Fatal(err)
+	}
+}
+
+func TestEarlyControllerFailureStopsHTTP(t *testing.T) {
+	a := NewApplication(testConfig(t), fake.NewSimpleClientset(), sinkFunc(func(context.Context, Record) error { return nil }), quietLog())
+	want := errors.New("cannot register watch handler")
+	a.controller = controllerFunc(func(context.Context) error { return want })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	l := listen(t)
+	if err := a.Run(ctx, l); !errors.Is(err, want) {
+		t.Fatal(err)
+	}
+	if a.State.Ready() {
+		t.Fatal("ready after controller failure")
 	}
 }
 

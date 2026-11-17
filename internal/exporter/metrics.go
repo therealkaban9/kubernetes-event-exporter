@@ -9,15 +9,15 @@ import (
 )
 
 type Metrics struct {
-	registry                                                                    *prometheus.Registry
-	Processed, Failures, QueueDrops, Retries, Duplicates, Filtered, WatchErrors prometheus.Counter
-	Duration                                                                    prometheus.Histogram
-	QueueDepth                                                                  prometheus.Gauge
+	registry                                                                                   *prometheus.Registry
+	Processed, Failures, QueueDrops, ShutdownDrops, Retries, Duplicates, Filtered, WatchErrors prometheus.Counter
+	Duration                                                                                   prometheus.Histogram
+	QueueDepth                                                                                 prometheus.Gauge
 }
 
 func NewMetrics() *Metrics {
 	m := &Metrics{registry: prometheus.NewRegistry()}
-	for name, p := range map[string]*prometheus.Counter{"processed_total": &m.Processed, "processing_failures_total": &m.Failures, "queue_drops_total": &m.QueueDrops, "retries_total": &m.Retries, "duplicates_total": &m.Duplicates, "filtered_total": &m.Filtered, "kubernetes_watch_errors_total": &m.WatchErrors} {
+	for name, p := range map[string]*prometheus.Counter{"processed_total": &m.Processed, "processing_failures_total": &m.Failures, "queue_drops_total": &m.QueueDrops, "shutdown_drops_total": &m.ShutdownDrops, "retries_total": &m.Retries, "duplicates_total": &m.Duplicates, "filtered_total": &m.Filtered, "kubernetes_watch_errors_total": &m.WatchErrors} {
 		*p = prometheus.NewCounter(prometheus.CounterOpts{Name: "kubernetes_event_exporter_" + name, Help: "Number of " + name + "."})
 		m.registry.MustRegister(*p)
 	}

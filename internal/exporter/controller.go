@@ -15,15 +15,26 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// EventProcessor consumes immutable event snapshots and honors cancellation.
+type EventProcessor interface{ Process(context.Context, Record) }
+
+// EventController owns event producers and their graceful shutdown.
+type EventController interface{ Run(context.Context) error }
+
+type controllerFunc func(context.Context) error
+
+func (f controllerFunc) Run(ctx context.Context) error { return f(ctx) }
+
 type Application struct {
-	cfg       Config
-	client    kubernetes.Interface
-	sink      Sink
-	log       *slog.Logger
-	Metrics   *Metrics
-	State     *State
-	queue     chan Record
-	processor *Processor
+	cfg        Config
+	client     kubernetes.Interface
+	sink       Sink
+	log        *slog.Logger
+	Metrics    *Metrics
+	State      *State
+	queue      chan Record
+	processor  EventProcessor
+	controller EventController
 }
 
 func NewApplication(c Config, client kubernetes.Interface, sink Sink, log *slog.Logger) *Application {
@@ -31,6 +42,7 @@ func NewApplication(c Config, client kubernetes.Interface, sink Sink, log *slog.
 	s.operational.Store(true)
 	a := &Application{cfg: c, client: client, sink: sink, log: log, Metrics: m, State: s, queue: make(chan Record, c.QueueCapacity)}
 	a.processor = NewProcessor(c, sink, m, s, log)
+	a.controller = controllerFunc(a.runController)
 	return a
 }
 
@@ -98,6 +110,10 @@ func (a *Application) runController(ctx context.Context) error {
 			defer workers.Done()
 			for r := range a.queue {
 				a.Metrics.QueueDepth.Dec()
+				if processing.Err() != nil {
+					a.Metrics.ShutdownDrops.Inc()
+					continue
+				}
 				a.processor.Process(processing, r)
 			}
 		}()
@@ -125,6 +141,9 @@ func (a *Application) runController(ctx context.Context) error {
 		return nil
 	case <-timer.C:
 		cancel()
+		// Sink's contract requires honoring context cancellation. Join workers
+		// before releasing sink resources; queued snapshots are discarded locally.
+		<-done
 		return fmt.Errorf("event drain exceeded shutdown timeout")
 	}
 }
@@ -138,19 +157,25 @@ func (a *Application) Run(ctx context.Context, listener net.Listener) error {
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.Serve(listener) }()
 	controllerDone := make(chan error, 1)
-	go func() { controllerDone <- a.runController(ctx) }()
+	go func() { controllerDone <- a.controller.Run(ctx) }()
 	var err error
+	controllerStopped := false
 	select {
 	case <-ctx.Done():
 	case err = <-serverErrors:
 		cancel()
+	case err = <-controllerDone:
+		controllerStopped = true
+		cancel()
 	}
 	a.State.stopping.Store(true)
-	if controllerErr := <-controllerDone; controllerErr != nil {
-		err = controllerErr
-	}
 	shutdownCtx, stop := context.WithTimeout(context.Background(), a.cfg.ShutdownTimeout)
 	defer stop()
+	if !controllerStopped {
+		if controllerErr := <-controllerDone; controllerErr != nil {
+			err = controllerErr
+		}
+	}
 	if e := server.Shutdown(shutdownCtx); e != nil {
 		_ = server.Close()
 		if err == nil {

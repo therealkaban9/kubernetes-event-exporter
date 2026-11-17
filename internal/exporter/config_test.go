@@ -148,3 +148,22 @@ func FuzzNormalize(f *testing.F) {
 		}
 	})
 }
+
+func FuzzLoadConfig(f *testing.F) {
+	f.Add("BUSINESS_MAPPINGS", `{"team":"b2c"}`)
+	f.Add("KUBE_QPS", "NaN")
+	f.Add("MAX_EVENT_AGE", "-1s")
+	f.Fuzz(func(t *testing.T, key, value string) {
+		c, err := LoadConfig(func(k string) string {
+			if k == "EVENT_EXPORTER_"+key {
+				return value
+			}
+			return map[string]string{"EVENT_EXPORTER_CLUSTER": "test", "EVENT_EXPORTER_ENVIRONMENT": "dev", "EVENT_EXPORTER_INGEST": "k8s-test", "EVENT_EXPORTER_SINK_URL": "http://localhost/insert/jsonline"}[k]
+		})
+		if err == nil {
+			if e := c.Validate(); e != nil {
+				t.Fatal("accepted invalid config", e)
+			}
+		}
+	})
+}
